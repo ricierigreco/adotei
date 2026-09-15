@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import '../../core/config/app_config.dart';
 import '../../data/models/user_model.dart';
 import '../../data/repositories/auth_repository.dart';
@@ -11,7 +10,7 @@ class AuthProvider extends ChangeNotifier {
   late final AuthRepository _authRepository;
 
   UserModel? _currentUser;
-  bool _isLoading = true;
+  bool _isLoading = false; // Começa como false — só fica true durante operações
   String? _errorMessage;
   StreamSubscription<UserModel?>? _authSubscription;
 
@@ -28,10 +27,13 @@ class AuthProvider extends ChangeNotifier {
       _authRepository = MockAuthRepository();
     }
 
-    // Ouve as mudanças de estado da autenticação
+    // Verifica sessão existente na inicialização (sem bloquear a UI)
+    _initializeFromCurrentSession();
+
+    // Ouve mudanças de estado (login/logout futuros)
     _authSubscription = _authRepository.onAuthStateChanged.listen(
       (user) {
-        _currentUser = user as UserModel?;
+        _currentUser = user;
         _isLoading = false;
         _errorMessage = null;
         notifyListeners();
@@ -44,25 +46,34 @@ class AuthProvider extends ChangeNotifier {
     );
   }
 
+  Future<void> _initializeFromCurrentSession() async {
+    try {
+      final user = await _authRepository.getCurrentUser();
+      if (user != null) {
+        _currentUser = user;
+        notifyListeners();
+      }
+    } catch (_) {
+      // Silencioso — se falhar, usuário simplesmente fica deslogado
+    }
+  }
+
   void clearError() {
     _errorMessage = null;
     notifyListeners();
   }
 
   Future<void> initializeUser() async {
+    // Apenas restaura sessão existente sem alterar isLoading,
+    // pois o _initializeFromCurrentSession() já faz isso no construtor.
+    // Este método é mantido para compatibilidade com a SplashScreen.
     try {
-      // Adiar o setState inicial para após o primeiro frame (evita "setState during build")
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        _isLoading = true;
+      final user = await _authRepository.getCurrentUser();
+      if (user != null && _currentUser == null) {
+        _currentUser = user;
         notifyListeners();
-      });
-      _currentUser = await _authRepository.getCurrentUser();
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+      }
+    } catch (_) {}
   }
 
   Future<bool> login(String email, String password) async {
